@@ -1,0 +1,1335 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
+        <title>Flight Simulator — Horizon 3D engine</title>
+        <meta name="description" content="Flight simulator in the browser: a plane over Chamonix, a drone over Rennes and the Space Shuttle in orbit, on IGN imagery and relief. Built with the Horizon 3D engine." />
+        <!-- Link previews (Open Graph): absolute URLs, the build itself uses relative ones. -->
+        <link rel="canonical" href="https://oss.siradel.com/horizon-demo-flight-simulator/" />
+        <meta property="og:type" content="website" />
+        <meta property="og:site_name" content="Horizon demos · Siradel open source" />
+        <meta property="og:title" content="Flight Simulator — plane, drone and shuttle over France in your browser" />
+        <meta property="og:description" content="Flight simulator in the browser: a plane over Chamonix, a drone over Rennes and the Space Shuttle in orbit, on IGN imagery and relief. Built with the Horizon 3D engine." />
+        <meta property="og:url" content="https://oss.siradel.com/horizon-demo-flight-simulator/" />
+        <meta property="og:image" content="https://oss.siradel.com/horizon-demo-flight-simulator/og-image.jpg" />
+        <meta property="og:image:width" content="1200" />
+        <meta property="og:image:height" content="630" />
+        <meta property="og:image:alt" content="Flight Simulator: a plane in the Chamonix valley, with its primary flight display, minimap and on-screen controls" />
+        <meta name="twitter:card" content="summary_large_image" />
+        <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 2l3 11 11 5v3l-11-3-1 7 4 3v2l-6-2-6 2v-2l4-3-1-7-11 3v-3l11-5z' fill='%232f3bd9'/%3E%3C/svg%3E" />
+        <!-- Static hosts without COOP/COEP headers (GitHub Pages): the service
+             worker adds them client-side. -->
+        <script src="coi-serviceworker.min.js"></script>
+        <style>
+            :root {
+                color-scheme: dark;
+            }
+            html,
+            body {
+                margin: 0;
+                height: 100%;
+                overflow: hidden;
+                background: #000;
+                overscroll-behavior: none;
+                font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+            }
+            #viewer {
+                display: block;
+                width: 100vw;
+                height: 100dvh;
+                touch-action: none;
+                outline: none;
+            }
+            @keyframes stall-blink {
+                50% {
+                    opacity: 0.25;
+                }
+            }
+            #pause {
+                position: fixed;
+                top: 16px;
+                left: 50%;
+                transform: translateX(-50%);
+                padding: 8px 18px;
+                border-radius: 999px;
+                border: 1px solid rgba(255, 255, 255, 0.25);
+                background: rgba(0, 0, 0, 0.45);
+                backdrop-filter: blur(6px);
+                color: #f5f5f5;
+                font: inherit;
+                font-size: 14px;
+                cursor: pointer;
+                user-select: none;
+                transition: background 0.15s ease;
+                display: none; /* shown only while paused */
+            }
+            #pause:hover {
+                background: rgba(0, 0, 0, 0.65);
+            }
+            #pause.paused {
+                display: block;
+                background: rgba(210, 140, 30, 0.65);
+                border-color: rgba(255, 200, 120, 0.6);
+            }
+            /* Attributions bar height, set from config.ts (UI.attributionBarPx). */
+            :root {
+                --attrib-h: 22px;
+            }
+            /* Frame over the minimap scene view, which renders into the same
+               rectangle (read by main.ts); border-box keeps the two aligned. */
+            #minimap {
+                position: fixed;
+                z-index: 8;
+                box-sizing: border-box;
+                border: 2px solid rgba(255, 255, 255, 0.4);
+                border-radius: 4px;
+                box-shadow: 0 2px 12px rgba(0, 0, 0, 0.5);
+                background: transparent;
+                pointer-events: auto;
+            }
+            #minimap.hidden {
+                display: none;
+            }
+            #minimap-title {
+                position: absolute;
+                top: 4px;
+                left: 6px;
+                padding: 1px 6px;
+                border-radius: 4px;
+                background: rgba(8, 11, 16, 0.6);
+                color: #cdd6e0;
+                font-size: 10px;
+                font-weight: 700;
+                letter-spacing: 0.08em;
+                pointer-events: none;
+                user-select: none;
+            }
+            #minimap-plane {
+                position: absolute;
+                left: 50%;
+                top: 50%;
+                /* main.ts adds rotate(); keep the centring translate. */
+                transform: translate(-50%, -50%);
+                transform-origin: center;
+                pointer-events: none;
+                filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.6));
+            }
+            #minimap-hide {
+                position: absolute;
+                top: 4px;
+                right: 4px;
+                width: 20px;
+                height: 20px;
+                display: grid;
+                place-items: center;
+                padding: 0;
+                border-radius: 4px;
+                border: 1px solid rgba(255, 255, 255, 0.25);
+                background: rgba(8, 11, 16, 0.6);
+                color: #f5f5f5;
+                font-size: 12px;
+                line-height: 1;
+                cursor: pointer;
+            }
+            #minimap-hide:hover {
+                background: rgba(8, 11, 16, 0.85);
+            }
+            #pfd {
+                position: fixed;
+                left: 50%;
+                bottom: calc(14px + var(--attrib-h));
+                transform: translateX(-50%);
+                display: grid;
+                grid-template-columns: 22px 62px 168px 62px 30px;
+                grid-template-rows: auto 168px;
+                column-gap: 4px;
+                row-gap: 3px;
+                align-items: center;
+                justify-items: center;
+                pointer-events: none;
+                /* Shown (.active) only while the visitor flies. */
+                opacity: 0;
+                visibility: hidden;
+                transition: opacity 0.35s ease, visibility 0.35s;
+                user-select: none;
+                filter: drop-shadow(0 2px 10px rgba(0, 0, 0, 0.55));
+            }
+            #heading-strip { grid-column: 2 / 5; grid-row: 1; width: 300px; height: 30px; }
+            #mode-chip { grid-column: 1; grid-row: 1; width: 22px; height: 22px; align-self: start; }
+            #throttle-gauge { grid-column: 1; grid-row: 2; width: 22px; height: 168px; }
+            #airspeed-tape { grid-column: 2; grid-row: 2; }
+            #attitude { grid-column: 3; grid-row: 2; width: 168px; height: 168px; }
+            #altitude-tape { grid-column: 4; grid-row: 2; }
+            #vsi { grid-column: 5; grid-row: 2; width: 30px; height: 168px; }
+            #pfd.active {
+                opacity: 1;
+                visibility: visible;
+            }
+            #pfd svg text {
+                font-family: system-ui, sans-serif;
+                font-weight: 600;
+            }
+            .ai-bezel {
+                transition: stroke 0.15s ease;
+            }
+            #attitude.stall .ai-bezel {
+                stroke: #ff5a5a;
+            }
+            #ai-stall {
+                visibility: hidden;
+            }
+            #attitude.stall #ai-stall {
+                visibility: visible;
+                animation: stall-blink 0.6s steps(1) infinite;
+            }
+            #gpws-warn {
+                visibility: hidden;
+            }
+            #attitude.gpws-warn #gpws-warn {
+                visibility: visible;
+                animation: stall-blink 0.6s steps(1) infinite;
+            }
+            /* Time-of-day slider. */
+            #sun-control {
+                position: fixed;
+                top: 16px;
+                right: 16px;
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                padding: 8px 12px;
+                border-radius: 999px;
+                background: rgba(0, 0, 0, 0.45);
+                backdrop-filter: blur(6px);
+                color: #f5f5f5;
+                font-size: 12px;
+                font-variant-numeric: tabular-nums;
+                user-select: none;
+            }
+            #sun-icon {
+                font-size: 15px;
+                filter: drop-shadow(0 0 3px rgba(255, 200, 90, 0.7));
+            }
+            #sun-slider {
+                width: 150px;
+                accent-color: #ffc24a;
+                cursor: pointer;
+            }
+            #sun-time {
+                min-width: 3.2em;
+                text-align: right;
+            }
+            /* "Fly to" search (F). */
+            #search-modal {
+                position: fixed;
+                inset: 0;
+                z-index: 10;
+                display: none;
+                justify-content: center;
+                align-items: flex-start;
+                padding-top: 12vh;
+                background: rgba(0, 0, 0, 0.45);
+                backdrop-filter: blur(2px);
+            }
+            #search-modal.open {
+                display: flex;
+            }
+            #search-panel {
+                width: min(520px, 92vw);
+                background: rgba(12, 15, 20, 0.92);
+                border: 1px solid rgba(255, 255, 255, 0.15);
+                border-radius: 12px;
+                box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6);
+                overflow: hidden;
+                color: #f5f5f5;
+            }
+            #search-input {
+                box-sizing: border-box;
+                width: 100%;
+                padding: 14px 16px;
+                border: none;
+                border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+                background: transparent;
+                color: #fff;
+                font: inherit;
+                font-size: 16px;
+                outline: none;
+            }
+            #search-input::placeholder {
+                color: rgba(255, 255, 255, 0.4);
+            }
+            #search-results {
+                list-style: none;
+                margin: 0;
+                padding: 4px;
+                max-height: 320px;
+                overflow-y: auto;
+            }
+            #search-results li {
+                display: flex;
+                align-items: center;
+                gap: 10px;
+                padding: 7px 8px 7px 12px;
+                border-radius: 8px;
+            }
+            #search-results li.selected,
+            #search-results li:hover {
+                background: rgba(255, 210, 74, 0.18);
+            }
+            #search-results .r-main {
+                display: flex;
+                flex-direction: column;
+                gap: 1px;
+                min-width: 0;
+                flex: 1;
+            }
+            #search-results .r-label {
+                font-size: 14px;
+                font-weight: 600;
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+            }
+            #search-results .r-detail {
+                font-size: 12px;
+                opacity: 0.6;
+            }
+            #search-results .r-actions {
+                display: flex;
+                gap: 6px;
+                flex-shrink: 0;
+            }
+            #search-results .r-actions button {
+                padding: 5px 10px;
+                border-radius: 6px;
+                border: 1px solid rgba(255, 255, 255, 0.18);
+                background: rgba(255, 255, 255, 0.06);
+                color: #eaeaea;
+                font: inherit;
+                font-size: 12px;
+                cursor: pointer;
+                white-space: nowrap;
+            }
+            #search-results .r-actions button:hover {
+                background: rgba(255, 255, 255, 0.16);
+            }
+            /* Primary action: set course, in the nav magenta. */
+            #search-results .r-actions .r-course {
+                border-color: rgba(255, 92, 240, 0.55);
+                background: rgba(255, 92, 240, 0.18);
+                color: #ffd9fb;
+            }
+            #search-results .r-actions .r-course:hover {
+                background: rgba(255, 92, 240, 0.3);
+            }
+            #search-status {
+                padding: 12px 16px;
+                font-size: 13px;
+                opacity: 0.6;
+            }
+            /* Waypoint banner. */
+            #nav-banner {
+                position: fixed;
+                left: 50%;
+                bottom: calc(226px + var(--attrib-h));
+                transform: translateX(-50%);
+                z-index: 9;
+                display: none;
+                align-items: center;
+                gap: 10px;
+                padding: 6px 8px 6px 14px;
+                border-radius: 999px;
+                border: 1px solid rgba(255, 92, 240, 0.5);
+                background: rgba(20, 6, 20, 0.72);
+                backdrop-filter: blur(6px);
+                color: #f5eaf8;
+                font-size: 13px;
+                white-space: nowrap;
+                user-select: none;
+                pointer-events: auto;
+            }
+            #nav-banner.active {
+                display: flex;
+            }
+            #nav-banner.arrived {
+                border-color: rgba(120, 230, 140, 0.6);
+                color: #d8f8de;
+            }
+            #nav-icon {
+                color: #ff5cf0;
+                font-size: 12px;
+            }
+            #nav-banner.arrived #nav-icon {
+                color: #7ce68c;
+            }
+            #nav-name {
+                font-weight: 700;
+                max-width: 260px;
+                overflow: hidden;
+                text-overflow: ellipsis;
+            }
+            #nav-banner .nav-field {
+                opacity: 0.85;
+                font-variant-numeric: tabular-nums;
+            }
+            #nav-banner .nav-field b {
+                color: #ff9cf4;
+                font-weight: 700;
+            }
+            #nav-clear {
+                width: 22px;
+                height: 22px;
+                display: grid;
+                place-items: center;
+                padding: 0;
+                border-radius: 999px;
+                border: 1px solid rgba(255, 255, 255, 0.25);
+                background: rgba(255, 255, 255, 0.06);
+                color: #f5eaf8;
+                font-size: 12px;
+                line-height: 1;
+                cursor: pointer;
+            }
+            #nav-clear:hover {
+                background: rgba(255, 255, 255, 0.18);
+            }
+            /* Terrain crash overlay. */
+            #crash-overlay {
+                position: fixed;
+                inset: 0;
+                z-index: 11;
+                display: none;
+                flex-direction: column;
+                justify-content: center;
+                align-items: center;
+                gap: 10px;
+                background: rgba(60, 6, 6, 0.42);
+                backdrop-filter: blur(2px);
+                color: #fff;
+                user-select: none;
+            }
+            #crash-overlay.active {
+                display: flex;
+            }
+            #crash-title {
+                font-size: 40px;
+                font-weight: 800;
+                letter-spacing: 0.12em;
+                color: #ff5a5a;
+                text-shadow: 0 2px 16px rgba(0, 0, 0, 0.6);
+            }
+            #crash-reset {
+                margin-top: 6px;
+                padding: 9px 20px;
+                border-radius: 999px;
+                border: 1px solid rgba(255, 255, 255, 0.35);
+                background: rgba(0, 0, 0, 0.4);
+                color: #f5f5f5;
+                font: inherit;
+                font-size: 14px;
+                cursor: pointer;
+            }
+            #crash-reset:hover {
+                background: rgba(0, 0, 0, 0.65);
+            }
+            /* Countdown to the unattended restart. */
+            #crash-countdown {
+                margin-top: 14px;
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                gap: 7px;
+                font-size: 13px;
+                letter-spacing: 0.04em;
+                color: rgba(255, 255, 255, 0.78);
+            }
+            #crash-countdown b {
+                font-variant-numeric: tabular-nums;
+                color: #fff;
+            }
+            #crash-progress {
+                width: 190px;
+                height: 3px;
+                border-radius: 999px;
+                background: rgba(255, 255, 255, 0.16);
+                overflow: hidden;
+            }
+            #crash-progress-fill {
+                height: 100%;
+                width: 100%;
+                background: #ff5a5a;
+            }
+            /* Readout for hovering vehicles, in place of the PFD. */
+            #drone-hud {
+                position: fixed;
+                left: 50%;
+                bottom: calc(14px + var(--attrib-h));
+                transform: translateX(-50%);
+                z-index: 9;
+                display: none;
+                gap: 18px;
+                padding: 10px 20px;
+                border-radius: 12px;
+                border: 1px solid rgba(255, 255, 255, 0.14);
+                background: rgba(0, 0, 0, 0.45);
+                backdrop-filter: blur(6px);
+                color: #f5f5f5;
+                font-variant-numeric: tabular-nums;
+                user-select: none;
+                pointer-events: none;
+                transition: opacity 0.35s ease;
+            }
+            #drone-hud.active {
+                display: flex;
+            }
+            #drone-hud .field {
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                min-width: 62px;
+            }
+            #drone-hud .label {
+                font-size: 10px;
+                letter-spacing: 0.12em;
+                opacity: 0.6;
+            }
+            #drone-hud .value {
+                font-size: 19px;
+                font-weight: 700;
+                line-height: 1.15;
+            }
+            #drone-hud .unit {
+                font-size: 9.5px;
+                opacity: 0.55;
+            }
+            /* Ground proximity (GPWS thresholds). */
+            #drone-hud .field.caution .value {
+                color: #ffd24a;
+            }
+            #drone-hud .field.warning .value {
+                color: #ff5a5a;
+            }
+            /* Current scene of the tour, under the title bar. */
+            #scene-badge {
+                position: fixed;
+                top: calc(60px + env(safe-area-inset-top));
+                left: calc(12px + env(safe-area-inset-left));
+                z-index: 9;
+                max-width: 40vw;
+                padding: 8px 14px;
+                border-radius: 10px;
+                background: rgba(0, 0, 0, 0.45);
+                backdrop-filter: blur(6px);
+                color: #f5f5f5;
+                font-size: 13px;
+                user-select: none;
+            }
+            #scene-number {
+                opacity: 0.6;
+                font-variant-numeric: tabular-nums;
+                margin-right: 6px;
+            }
+            #scene-name {
+                font-weight: 700;
+            }
+            #scene-blurb {
+                margin-top: 2px;
+                font-size: 11px;
+                opacity: 0.7;
+            }
+            /* Attributions of the visible layers, reported by the engine; most data
+               licences require every text and logo to be displayed. */
+            #attribution {
+                position: fixed;
+                left: 0;
+                right: 0;
+                bottom: 0;
+                z-index: 9;
+                box-sizing: border-box;
+                height: var(--attrib-h);
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                gap: 16px;
+                padding: 0 12px;
+                background: rgba(0, 0, 0, 0.45);
+                backdrop-filter: blur(6px);
+                color: rgba(255, 255, 255, 0.72);
+                font-size: 10.5px;
+                line-height: 1;
+                white-space: nowrap;
+                overflow: hidden;
+                user-select: none;
+            }
+            #attribution span {
+                display: inline-flex;
+                align-items: center;
+                gap: 5px;
+            }
+            #attribution a {
+                color: inherit;
+            }
+            #attribution img {
+                height: 14px;
+                vertical-align: middle;
+            }
+            /* Idle warning before the unattended restart (AUTO_RESET). */
+            #idle-toast {
+                position: fixed;
+                top: 14px;
+                left: 50%;
+                transform: translateX(-50%);
+                z-index: 12;
+                display: none;
+                padding: 7px 16px;
+                border-radius: 999px;
+                border: 1px solid rgba(255, 210, 74, 0.35);
+                background: rgba(38, 28, 6, 0.78);
+                color: #ffd24a;
+                font-size: 12.5px;
+                letter-spacing: 0.04em;
+                user-select: none;
+            }
+            #idle-toast.active {
+                display: block;
+            }
+            #idle-toast b {
+                font-variant-numeric: tabular-nums;
+            }
+            #idle-toast span {
+                color: rgba(255, 255, 255, 0.6);
+            }
+            /* Trajectory recording (T): counter and JSON panel. */
+            #rec-indicator {
+                position: fixed;
+                top: 14px;
+                left: 50%;
+                transform: translateX(-50%);
+                z-index: 12;
+                display: none;
+                padding: 5px 14px;
+                border-radius: 999px;
+                background: rgba(60, 6, 6, 0.72);
+                color: #ff7a7a;
+                font-size: 12px;
+                font-weight: 700;
+                letter-spacing: 0.06em;
+                user-select: none;
+            }
+            #rec-indicator.active {
+                display: block;
+            }
+            #trajectory-modal {
+                position: fixed;
+                inset: 0;
+                z-index: 13;
+                display: none;
+                justify-content: center;
+                align-items: center;
+                background: rgba(5, 7, 13, 0.55);
+                backdrop-filter: blur(2px);
+            }
+            #trajectory-modal.open {
+                display: flex;
+            }
+            #trajectory-panel {
+                width: min(720px, 92vw);
+                display: flex;
+                flex-direction: column;
+                gap: 10px;
+                padding: 18px;
+                border-radius: 12px;
+                border: 1px solid rgba(255, 255, 255, 0.14);
+                background: #0c1018;
+                color: #eaeaea;
+            }
+            #trajectory-panel h2 {
+                margin: 0;
+                font-size: 15px;
+                font-weight: 700;
+            }
+            #trajectory-panel p {
+                margin: 0;
+                font-size: 12px;
+                opacity: 0.7;
+            }
+            #trajectory-output {
+                width: 100%;
+                height: 46vh;
+                resize: vertical;
+                box-sizing: border-box;
+                padding: 10px;
+                border-radius: 8px;
+                border: 1px solid rgba(255, 255, 255, 0.14);
+                background: #05070d;
+                color: #cfe8ff;
+                font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+                font-size: 11px;
+                line-height: 1.4;
+            }
+            #trajectory-actions {
+                display: flex;
+                justify-content: flex-end;
+                gap: 8px;
+            }
+            #trajectory-actions button {
+                padding: 8px 16px;
+                border-radius: 999px;
+                border: 1px solid rgba(255, 255, 255, 0.28);
+                background: rgba(255, 255, 255, 0.06);
+                color: #f5f5f5;
+                font: inherit;
+                font-size: 13px;
+                cursor: pointer;
+            }
+            #trajectory-actions button:hover {
+                background: rgba(255, 255, 255, 0.14);
+            }
+            /* Curtain across automatic scene changes (SCENE_FADE), above everything. */
+            #fade {
+                position: fixed;
+                inset: 0;
+                z-index: 20;
+                background: #000;
+                opacity: 0;
+                pointer-events: none;
+                transition: opacity 700ms ease-in;
+            }
+            #fade.black {
+                opacity: 1;
+                transition-timing-function: ease-out;
+            }
+            #loading {
+                position: fixed;
+                inset: 0;
+                display: grid;
+                place-items: center;
+                color: #eaeaea;
+                font-size: 15px;
+                letter-spacing: 0.02em;
+                background: #05070d;
+                transition: opacity 0.6s ease;
+            }
+            #loading.hidden {
+                opacity: 0;
+                pointer-events: none;
+            }
+
+            /* --- Title bar, credits, About ------------------------------------ */
+            #brand {
+                position: fixed;
+                top: calc(12px + env(safe-area-inset-top));
+                left: calc(12px + env(safe-area-inset-left));
+                z-index: 9;
+                display: flex;
+                align-items: center;
+                gap: 10px;
+                padding: 6px 6px 6px 14px;
+                border-radius: 999px;
+                background: rgba(0, 0, 0, 0.45);
+                backdrop-filter: blur(6px);
+                color: #f5f5f5;
+            }
+            #brand-logo {
+                display: flex;
+                height: 12px;
+                color: #f5f5f5;
+            }
+            .siradel-logo {
+                height: 100%;
+                width: auto;
+            }
+            #brand h1 {
+                margin: 0;
+                font-size: 15px;
+                font-weight: 650;
+                white-space: nowrap;
+            }
+            #brand button {
+                min-width: 28px;
+                height: 28px;
+                padding: 0 8px;
+                border: 1px solid rgba(255, 255, 255, 0.25);
+                border-radius: 999px;
+                background: rgba(255, 255, 255, 0.08);
+                color: #f5f5f5;
+                font: 600 12px/1 inherit;
+                cursor: pointer;
+            }
+            #about-open {
+                font-family: Georgia, serif !important;
+                font-style: italic;
+                font-size: 14px !important;
+            }
+            #brand button:hover {
+                background: rgba(255, 255, 255, 0.22);
+            }
+            #attribution {
+                cursor: pointer;
+                border: 0;
+                font-family: inherit;
+            }
+            #attribution:hover {
+                color: #fff;
+            }
+            .about {
+                width: min(620px, calc(100vw - 24px));
+                max-height: calc(100dvh - 48px);
+                padding: 0;
+                display: none;
+                flex-direction: column;
+                border: 1px solid rgba(255, 255, 255, 0.15);
+                border-radius: 16px;
+                background: #10141c;
+                color: #d5dbe3;
+                box-shadow: 0 18px 48px rgba(0, 0, 0, 0.6);
+                font-family: inherit;
+            }
+            .about[open] {
+                display: flex;
+            }
+            .about::backdrop {
+                background: rgba(0, 0, 0, 0.55);
+            }
+            .about-head {
+                display: flex;
+                align-items: center;
+                gap: 12px;
+                padding: 16px 16px 12px 22px;
+                border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+            }
+            .about-head h2 {
+                margin: 0 auto 0 0;
+                font-size: 20px;
+                color: #fff;
+            }
+            .about-close {
+                width: 32px;
+                height: 32px;
+                border: 0;
+                border-radius: 999px;
+                background: rgba(255, 255, 255, 0.08);
+                color: #d5dbe3;
+                cursor: pointer;
+            }
+            .about-body {
+                overflow: auto;
+                padding: 4px 22px 20px;
+                font-size: 14px;
+                line-height: 1.5;
+            }
+            .about-body h3 {
+                margin: 18px 0 6px;
+                font-size: 15px;
+                color: #fff;
+            }
+            .about-body p {
+                margin: 0 0 8px;
+            }
+            .about-body a {
+                color: #ffd24a;
+            }
+            .about-sources {
+                list-style: none;
+                margin: 0 0 8px;
+                padding: 0;
+            }
+            .about-sources li {
+                display: grid;
+                grid-template-columns: 9em 1fr auto;
+                gap: 4px 12px;
+                padding: 7px 0;
+                border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            }
+            .about-sources strong {
+                color: #fff;
+            }
+            .about-links {
+                display: flex;
+                flex-wrap: wrap;
+                align-items: center;
+                gap: 8px 20px;
+                margin-top: 18px;
+                padding-top: 14px;
+                border-top: 1px solid rgba(255, 255, 255, 0.12);
+            }
+            .about-logo {
+                display: flex;
+                height: 16px;
+                color: #fff !important;
+            }
+            @media (max-width: 640px) {
+                .about-sources li {
+                    grid-template-columns: 1fr;
+                }
+            }
+
+            /* --- Touch layout (html.touch, always set by main.ts) -------------- */
+            #touch-actions,
+            #stick,
+            #throttle {
+                display: none;
+            }
+            html.touch #touch-actions {
+                position: fixed;
+                z-index: 9;
+                display: flex;
+                gap: 8px;
+            }
+            #touch-actions button {
+                width: 44px;
+                height: 44px;
+                display: grid;
+                place-items: center;
+                border: 1px solid rgba(255, 255, 255, 0.25);
+                border-radius: 999px;
+                background: rgba(0, 0, 0, 0.5);
+                backdrop-filter: blur(6px);
+                color: #f5f5f5;
+            }
+            #touch-actions button.pressed,
+            #touch-actions button.active {
+                background: rgba(255, 210, 74, 0.6);
+                color: #1a1205;
+            }
+            /* Resume the demo: only while the visitor flies. */
+            #touch-actions #act-demo:not(.available) {
+                display: none;
+            }
+            #touch-actions svg {
+                width: 22px;
+                height: 22px;
+                fill: none;
+                stroke: currentColor;
+                stroke-width: 2;
+                stroke-linecap: round;
+                stroke-linejoin: round;
+            }
+            html.touch #stick {
+                position: fixed;
+                z-index: 9;
+                left: calc(20px + env(safe-area-inset-left));
+                bottom: calc(30px + var(--attrib-h) + env(safe-area-inset-bottom));
+                display: block;
+                width: 132px;
+                height: 132px;
+                border-radius: 50%;
+                border: 2px solid rgba(255, 255, 255, 0.35);
+                background:
+                    linear-gradient(rgba(255, 255, 255, 0.2), rgba(255, 255, 255, 0.2)) center / 2px 70% no-repeat,
+                    linear-gradient(rgba(255, 255, 255, 0.2), rgba(255, 255, 255, 0.2)) center / 70% 2px no-repeat,
+                    rgba(0, 0, 0, 0.35);
+                backdrop-filter: blur(4px);
+                touch-action: none;
+            }
+            #stick-knob {
+                position: absolute;
+                left: 50%;
+                top: 50%;
+                width: 56px;
+                height: 56px;
+                margin: -28px 0 0 -28px;
+                border-radius: 50%;
+                background: rgba(255, 210, 74, 0.85);
+                box-shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
+                pointer-events: none;
+            }
+            html.touch #throttle {
+                position: fixed;
+                z-index: 9;
+                right: calc(20px + env(safe-area-inset-right));
+                bottom: calc(30px + var(--attrib-h) + env(safe-area-inset-bottom));
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                gap: 4px;
+                padding: 6px 10px 12px;
+                border-radius: 16px;
+                background: rgba(0, 0, 0, 0.35);
+                backdrop-filter: blur(4px);
+                color: #f5f5f5;
+                font-size: 11px;
+                touch-action: none;
+            }
+            #throttle-track {
+                position: relative;
+                width: 36px;
+                height: 132px;
+                border-radius: 10px;
+                background: rgba(255, 255, 255, 0.12);
+                overflow: hidden;
+            }
+            #throttle-fill {
+                position: absolute;
+                inset: auto 0 0;
+                height: 40%;
+                background: rgba(255, 210, 74, 0.55);
+            }
+            #throttle-handle {
+                position: absolute;
+                left: 0;
+                right: 0;
+                bottom: 40%;
+                height: 6px;
+                margin-bottom: -3px;
+                background: #ffd24a;
+            }
+            /* The credits scroll sideways rather than being cut. */
+            html.touch #attribution {
+                justify-content: flex-start;
+                overflow-x: auto;
+                font-size: 9px;
+                gap: 8px;
+            }
+            html.touch #scene-badge {
+                max-width: calc(100vw - 24px);
+                padding: 5px 12px;
+                font-size: 12px;
+            }
+            html.touch #scene-blurb {
+                display: none;
+            }
+            html.touch #drone-hud {
+                gap: 10px;
+                padding: 6px 12px;
+                transform: translateX(-50%) scale(0.8);
+            }
+            html.touch #sun-control {
+                top: calc(12px + env(safe-area-inset-top));
+                right: calc(12px + env(safe-area-inset-right));
+                padding: 6px 10px;
+            }
+            html.touch #sun-slider {
+                width: 84px;
+            }
+            html.touch #minimap {
+                left: calc(8px + env(safe-area-inset-left));
+                right: auto;
+                width: 36vmin;
+                height: 36vmin;
+            }
+            html.touch #minimap-hide {
+                width: 28px;
+                height: 28px;
+            }
+
+            /* Portrait: instruments on top, actions down the right edge. */
+            @media (orientation: portrait) {
+                html.touch #drone-hud {
+                    top: calc(96px + env(safe-area-inset-top));
+                    bottom: auto;
+                    transform-origin: top center;
+                }
+                html.touch #pfd {
+                    top: calc(96px + env(safe-area-inset-top));
+                    bottom: auto;
+                    transform: translateX(-50%) scale(0.68);
+                    transform-origin: top center;
+                }
+                html.touch #touch-actions {
+                    right: calc(8px + env(safe-area-inset-right));
+                    top: 260px;
+                    flex-direction: column;
+                }
+                html.touch #minimap {
+                    top: 260px;
+                    bottom: auto;
+                }
+                html.touch #nav-banner {
+                    top: 240px;
+                    bottom: auto;
+                }
+            }
+            /* Landscape: instruments at the bottom between stick and throttle. */
+            @media (orientation: landscape) {
+                html.touch #drone-hud {
+                    bottom: calc(6px + var(--attrib-h) + env(safe-area-inset-bottom));
+                    transform-origin: bottom center;
+                }
+                html.touch #pfd {
+                    bottom: calc(6px + var(--attrib-h) + env(safe-area-inset-bottom));
+                    transform: translateX(-50%) scale(0.6);
+                    transform-origin: bottom center;
+                }
+                html.touch #touch-actions {
+                    top: calc(64px + env(safe-area-inset-top));
+                    right: calc(12px + env(safe-area-inset-right));
+                }
+                html.touch #minimap {
+                    top: calc(100px + env(safe-area-inset-top));
+                    bottom: auto;
+                    width: 30vmin;
+                    height: 30vmin;
+                }
+                html.touch #nav-banner {
+                    top: calc(62px + env(safe-area-inset-top));
+                    bottom: auto;
+                }
+            }
+            /* Narrow screens: the title shrinks to fit beside the sun slider. */
+            @media (max-width: 430px) {
+                #brand h1 {
+                    font-size: 13px;
+                }
+                #brand-logo {
+                    display: none;
+                }
+            }
+        </style>
+    </head>
+    <body>
+        <canvas id="viewer" tabindex="0"></canvas>
+
+        <!-- Title, About and language, top left. -->
+        <header id="brand">
+            <a id="brand-logo" href="https://www.siradel.com" target="_blank" rel="noopener" aria-label="Siradel"></a>
+            <h1>Flight Simulator</h1>
+            <button id="about-open" type="button" data-i18n-title="about" data-i18n-aria-label="about">i</button>
+            <button id="lang-switch" type="button" data-i18n-title="language" data-i18n-aria-label="language"></button>
+        </header>
+
+        <button id="pause" type="button">⏸ Pause</button>
+
+        <!-- Minimap frame; main.ts reads its rectangle for the minimap viewport. -->
+        <div id="minimap">
+            <span id="minimap-title" data-i18n="map">MAP</span>
+            <button id="minimap-hide" type="button" data-i18n-title="hideMinimap" data-i18n-aria-label="hideMinimap">✕</button>
+            <!-- Vehicle marker at the map centre, rotated to the heading. -->
+            <svg id="minimap-plane" viewBox="-12 -12 24 24" width="26" height="26" aria-hidden="true">
+                <polygon points="0,-10 7,9 0,4.5 -7,9" fill="#ff3b30"
+                    stroke="#ffffff" stroke-width="1.6" stroke-linejoin="round" />
+            </svg>
+        </div>
+
+        <!-- Time of day. -->
+        <div id="sun-control">
+            <span id="sun-icon">☀</span>
+            <input id="sun-slider" type="range" min="0" max="24" step="0.1" value="14" />
+            <span id="sun-time">–</span>
+        </div>
+
+        <!-- Current scene of the tour. -->
+        <div id="scene-badge">
+            <div><span id="scene-number">1/1</span><span id="scene-name">—</span></div>
+            <div id="scene-blurb"></div>
+        </div>
+
+        <!-- Action buttons (each sends its key), the stick, and the lever
+             (throttle, or climb for hovering vehicles). -->
+        <nav id="touch-actions">
+            <button type="button" data-key="p" data-i18n-aria-label="actPause" data-i18n-title="actPause">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14M16 5v14"/></svg>
+            </button>
+            <button type="button" id="act-demo" data-key="r" data-i18n-aria-label="actDemo" data-i18n-title="actDemo">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 5l12 7-12 7V5Z"/></svg>
+            </button>
+            <button type="button" data-key="n" data-i18n-aria-label="actNext" data-i18n-title="actNext">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5l9 7-9 7V5Z"/><path d="M18 5v14"/></svg>
+            </button>
+            <button type="button" data-key="v" data-i18n-aria-label="actView" data-i18n-title="actView">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg>
+            </button>
+            <button type="button" data-key="f" data-i18n-aria-label="actSearch" data-i18n-title="actSearch">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>
+            </button>
+            <button type="button" data-key="m" data-i18n-aria-label="actMap" data-i18n-title="actMap">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4 3 6v14l6-2 6 2 6-2V4l-6 2-6-2Z"/><path d="M9 4v14M15 6v14"/></svg>
+            </button>
+        </nav>
+        <div id="stick" role="img" data-i18n-aria-label="stick"><div id="stick-knob"></div></div>
+        <div id="throttle" role="slider" aria-valuemin="0" aria-valuemax="100" aria-valuenow="40">
+            <span id="throttle-label" data-i18n="throttle">Throttle</span>
+            <div id="throttle-track"><div id="throttle-fill"></div><div id="throttle-handle"></div></div>
+        </div>
+
+        <!-- Readout for hovering vehicles, in place of the PFD. -->
+        <div id="drone-hud">
+            <div class="field"><span class="label">SPD</span><span class="value" id="dh-spd">0</span><span class="unit" id="dh-spd-unit">m/s</span></div>
+            <div class="field"><span class="label">ALT</span><span class="value" id="dh-alt">0</span><span class="unit" id="dh-alt-unit">m</span></div>
+            <div class="field" id="dh-agl-field"><span class="label">AGL</span><span class="value" id="dh-agl">—</span><span class="unit">m</span></div>
+            <div class="field"><span class="label">V/S</span><span class="value" id="dh-vs">0</span><span class="unit" id="dh-vs-unit">m/s</span></div>
+            <div class="field"><span class="label">HDG</span><span class="value" id="dh-hdg">000</span><span class="unit">°</span></div>
+        </div>
+
+        <!-- Primary flight display; scales are built and driven by main.ts. -->
+        <div id="pfd">
+            <!-- Control mode: A = assist (self-centering), M = manual. -->
+            <svg id="mode-chip" viewBox="0 0 22 22" aria-hidden="true">
+                <rect id="mode-box" x="0.75" y="0.75" width="20.5" height="20.5" rx="4" fill="rgba(8,11,16,0.55)" stroke="#cfe8ff" stroke-width="1.5" />
+                <text id="mode-text" x="11" y="16" text-anchor="middle" font-size="13" font-weight="700" fill="#cfe8ff">A</text>
+            </svg>
+
+            <svg id="throttle-gauge" viewBox="0 0 22 168" aria-hidden="true">
+                <rect x="0" y="0" width="22" height="168" rx="3" fill="rgba(8,11,16,0.55)" />
+                <text x="11" y="9" text-anchor="middle" fill="#aeb8c4" font-size="7" font-weight="700">THR</text>
+                <rect x="7" y="14" width="8" height="140" rx="2" fill="rgba(255,255,255,0.12)" />
+                <rect id="thr-fill" x="7" y="154" width="8" height="0" rx="2" fill="#ffd24a" />
+                <g stroke="#cdd6e0" stroke-width="1.2">
+                    <line x1="3" y1="14" x2="6" y2="14" />
+                    <line x1="3" y1="49" x2="6" y2="49" />
+                    <line x1="3" y1="84" x2="6" y2="84" />
+                    <line x1="3" y1="119" x2="6" y2="119" />
+                    <line x1="3" y1="154" x2="6" y2="154" />
+                </g>
+                <rect x="2" y="156" width="18" height="10" fill="#0c0f14" stroke="#ffd24a" stroke-width="1" rx="2" />
+                <text id="thr-value" x="11" y="164" text-anchor="middle" fill="#fff" font-size="8" font-weight="700">–</text>
+            </svg>
+
+            <svg id="heading-strip" viewBox="0 0 300 30" aria-hidden="true">
+                <rect x="0" y="0" width="300" height="30" rx="3" fill="rgba(8,11,16,0.6)" />
+                <clipPath id="hdg-clip"><rect x="2" y="0" width="296" height="30" /></clipPath>
+                <g clip-path="url(#hdg-clip)"><g id="hdg-scale"></g></g>
+                <!-- Bearing to the destination. -->
+                <g clip-path="url(#hdg-clip)">
+                    <g id="hdg-bug" visibility="hidden">
+                        <polygon points="150,20 143,29 157,29" fill="#ff5cf0" stroke="#1a0b1a" stroke-width="0.5" />
+                    </g>
+                </g>
+                <rect x="134" y="0" width="32" height="14" fill="#0c0f14" stroke="#ffd24a" stroke-width="1" rx="2" />
+                <text id="hdg-value" x="150" y="11" text-anchor="middle" fill="#fff" font-size="11">–</text>
+                <polygon points="150,20 145,13 155,13" fill="#ffd24a" />
+            </svg>
+
+            <svg id="airspeed-tape" viewBox="0 0 62 168" aria-hidden="true">
+                <rect x="0" y="0" width="62" height="168" rx="3" fill="rgba(8,11,16,0.55)" />
+                <clipPath id="asi-clip"><rect x="0" y="6" width="62" height="156" /></clipPath>
+                <g clip-path="url(#asi-clip)"><g id="asi-scale"></g></g>
+                <polygon points="62,84 54,78 54,90" fill="#0c0f14" stroke="#ffd24a" stroke-width="1" />
+                <rect x="6" y="76" width="48" height="16" fill="#0c0f14" stroke="#ffd24a" stroke-width="1" rx="2" />
+                <text id="asi-value" x="50" y="88" text-anchor="end" fill="#fff" font-size="12">–</text>
+            </svg>
+
+            <svg id="attitude" viewBox="0 0 200 200" aria-hidden="true">
+            <defs>
+                <clipPath id="ai-clip"><circle cx="100" cy="100" r="90" /></clipPath>
+            </defs>
+            <circle cx="100" cy="100" r="94" fill="#080b10" />
+            <g clip-path="url(#ai-clip)">
+                <g id="ai-roll">
+                    <g id="ai-pitch"></g>
+                    <!-- rolling bank pointer -->
+                    <polygon points="100,24 95,15 105,15" fill="#ffd24a" />
+                </g>
+            </g>
+            <circle class="ai-bezel" cx="100" cy="100" r="90" fill="none" stroke="#1b2634" stroke-width="7" />
+            <!-- fixed roll scale + zero index -->
+            <g id="ai-scale" stroke="#dde6f0" stroke-width="1.4"></g>
+            <polygon points="100,12 96,5 104,5" fill="#dde6f0" />
+            <!-- fixed aircraft symbol -->
+            <g stroke="#ffd24a" stroke-width="3" fill="none" stroke-linecap="round">
+                <line x1="58" y1="100" x2="86" y2="100" />
+                <line x1="114" y1="100" x2="142" y2="100" />
+                <line x1="100" y1="100" x2="100" y2="112" />
+            </g>
+            <circle cx="100" cy="100" r="2.4" fill="#ffd24a" />
+            <!-- Stall annunciator. -->
+            <g id="ai-stall">
+                <rect x="68" y="40" width="64" height="20" rx="3" fill="rgba(28,4,4,0.9)" stroke="#ff5a5a" stroke-width="1.5" />
+                <text x="100" y="54" text-anchor="middle" fill="#ff5a5a" font-size="13" font-weight="700" letter-spacing="1">STALL</text>
+            </g>
+            <!-- Ground-proximity warning. -->
+            <text id="gpws-warn" x="100" y="72" text-anchor="middle" fill="#ff5a5a" font-size="13" font-weight="800" letter-spacing="1">TERRAIN</text>
+            <!-- Radio altimeter, shown near terrain. -->
+            <g id="ai-ra" visibility="hidden">
+                <text x="100" y="130" text-anchor="middle" fill="#aeb8c4" font-size="7" font-weight="700" letter-spacing="1">AGL</text>
+                <rect id="ra-box" x="74" y="134" width="52" height="18" rx="3" fill="rgba(8,11,16,0.85)" stroke="#cdd6e0" stroke-width="1.2" />
+                <text id="ra-value" x="100" y="147" text-anchor="middle" fill="#fff" font-size="12" font-weight="700">–</text>
+            </g>
+            </svg>
+
+            <svg id="altitude-tape" viewBox="0 0 62 168" aria-hidden="true">
+                <rect x="0" y="0" width="62" height="168" rx="3" fill="rgba(8,11,16,0.55)" />
+                <clipPath id="alt-clip"><rect x="0" y="6" width="62" height="156" /></clipPath>
+                <g clip-path="url(#alt-clip)"><g id="alt-scale"></g></g>
+                <polygon points="0,84 8,78 8,90" fill="#0c0f14" stroke="#ffd24a" stroke-width="1" />
+                <rect x="8" y="76" width="48" height="16" fill="#0c0f14" stroke="#ffd24a" stroke-width="1" rx="2" />
+                <text id="alt-value" x="12" y="88" text-anchor="start" fill="#fff" font-size="12">–</text>
+            </svg>
+
+            <!-- Vertical speed, ±30 m/s full scale. -->
+            <svg id="vsi" viewBox="0 0 30 168" aria-hidden="true">
+                <rect x="0" y="0" width="30" height="168" rx="3" fill="rgba(8,11,16,0.55)" />
+                <text x="15" y="9" text-anchor="middle" fill="#aeb8c4" font-size="7" font-weight="700">V/S</text>
+                <rect id="vsi-bar" x="11" y="82" width="8" height="0" rx="1.5" fill="#ffd24a" />
+                <g stroke="#cdd6e0" stroke-width="1.2">
+                    <line x1="3" y1="14" x2="7" y2="14" />
+                    <line x1="3" y1="36.7" x2="6" y2="36.7" />
+                    <line x1="3" y1="59.3" x2="6" y2="59.3" />
+                    <line x1="3" y1="104.7" x2="6" y2="104.7" />
+                    <line x1="3" y1="127.3" x2="6" y2="127.3" />
+                    <line x1="3" y1="150" x2="7" y2="150" />
+                </g>
+                <line x1="2" y1="82" x2="28" y2="82" stroke="#ffffff" stroke-width="1.4" />
+                <rect x="2" y="153" width="26" height="13" fill="#0c0f14" stroke="#ffd24a" stroke-width="1" rx="2" />
+                <text id="vsi-value" x="15" y="163" text-anchor="middle" fill="#fff" font-size="8" font-weight="700">0</text>
+            </svg>
+        </div>
+
+        <!-- "Fly to" search: set a destination or teleport. -->
+        <div id="search-modal" role="dialog" aria-modal="true" data-i18n-aria-label="searchLabel">
+            <div id="search-panel">
+                <input
+                    id="search-input"
+                    type="text"
+                    placeholder="Search…  town, mountain, lake"
+                    data-i18n-placeholder="searchPlaceholder"
+                    autocomplete="off"
+                    autocorrect="off"
+                    spellcheck="false"
+                />
+                <ul id="search-results"></ul>
+                <div id="search-status" hidden></div>
+            </div>
+        </div>
+
+        <!-- Destination name, distance, ETA, bearing. -->
+        <div id="nav-banner">
+            <span id="nav-icon">►</span>
+            <span id="nav-name">—</span>
+            <span id="nav-dist" class="nav-field"></span>
+            <span id="nav-eta" class="nav-field"></span>
+            <span id="nav-brg" class="nav-field"></span>
+            <button id="nav-clear" type="button" data-i18n-title="clearDestination" data-i18n-aria-label="clearDestination">✕</button>
+        </div>
+
+        <!-- Terrain crash. -->
+        <div id="crash-overlay">
+            <div id="crash-title">▲ TERRAIN</div>
+            <div data-i18n="crashText">You flew into the ground.</div>
+            <button id="crash-reset" type="button" data-i18n="crashReset">↻ Reset (R)</button>
+            <div id="crash-countdown">
+                <span><span data-i18n="restartIn">Restarting the demo in</span> <b id="crash-seconds">30</b> s</span>
+                <div id="crash-progress"><div id="crash-progress-fill"></div></div>
+            </div>
+        </div>
+
+        <!-- Attributions of the visible layers; a click opens the sources in About. -->
+        <button id="attribution" type="button" data-i18n-title="sources"></button>
+
+        <!-- Idle warning before the unattended restart. -->
+        <div id="idle-toast">
+            <span data-i18n="restartIn">Restarting the demo in</span> <b id="idle-seconds">10</b> s <span data-i18n="keepFlying">— touch the controls to keep flying</span>
+        </div>
+
+        <!-- Trajectory recording (T). -->
+        <div id="rec-indicator">● REC</div>
+        <div id="trajectory-modal" role="dialog" aria-modal="true" aria-label="Recorded trajectory">
+            <div id="trajectory-panel">
+                <h2>Recorded trajectory</h2>
+                <p id="trajectory-hint"></p>
+                <textarea id="trajectory-output" readonly spellcheck="false"></textarea>
+                <div id="trajectory-actions">
+                    <button id="trajectory-copy" type="button">Copy</button>
+                    <button id="trajectory-close" type="button">Close</button>
+                </div>
+            </div>
+        </div>
+
+        <div id="fade"></div>
+
+        <div id="loading" data-i18n="loading">Loading…</div>
+
+        <script type="module" src="/src/main.ts"></script>
+    </body>
+</html>

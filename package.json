@@ -1,0 +1,33 @@
+{
+    "name": "horizon-demo-flight-simulator",
+    "version": "0.1.0",
+    "private": true,
+    "description": "A tour of France in a browser flight simulator: plane, drone and Space Shuttle over IGN imagery and Alpine relief, built as a demonstrator of the Horizon 3D engine.",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/siradel-oss/horizon-demo-flight-simulator.git"
+    },
+    "homepage": "https://github.com/siradel-oss/horizon-demo-flight-simulator",
+    "license": "MIT",
+    "type": "module",
+    "packageManager": "pnpm@10.33.0",
+    "engines": {
+        "node": ">=22.12.0"
+    },
+    "scripts": {
+        "dev": "vite",
+        "build": "tsc --noEmit && vite build",
+        "preview": "vite preview",
+        "type-check": "tsc --noEmit"
+    },
+    "dependencies": {
+        "@siradel-oss/horizon-api": "26.1.0",
+        "@siradel-oss/horizon-core": "26.1.0",
+        "@siradel-oss/horizon-protocol": "26.1.0"
+    },
+    "devDependencies": {
+        "@types/node": "^24.10.4",
+        "typescript": "~5.9.3",
+        "vite": "^7.3.7"
+    }
+}
